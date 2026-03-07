@@ -12,18 +12,23 @@ import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
+import miv.dev.ru.asp.AspRulesEngine
 import miv.dev.ru.domain.*
 import miv.dev.ru.forms.FormRepository
-import miv.dev.ru.forms.FormRulesEngine
+import miv.dev.ru.session.FormSession
+import miv.dev.ru.session.SessionRegistry
 import miv.dev.ru.signals.SignalDispatcher
 import org.slf4j.LoggerFactory
+import java.util.UUID
 
 private val log = LoggerFactory.getLogger("Routing")
+private val json = Json { ignoreUnknownKeys = true }
 
 fun Application.configureRouting(
     repo: FormRepository,
-    rulesEngine: FormRulesEngine,
-    dispatcher: SignalDispatcher
+    rulesEngine: AspRulesEngine,
+    signalDispatcher: SignalDispatcher,
+    sessionRegistry: SessionRegistry
 ) {
     install(CORS) {
         anyHost()
@@ -35,18 +40,15 @@ fun Application.configureRouting(
     install(DefaultHeaders)
 
     routing {
-        // Serve static files
         staticResources("/", "static")
 
         route("/api/forms") {
 
-            // POST /api/forms — create new form schema
+            // POST /api/forms — create new form
             post {
                 runCatching {
                     val schema = call.receive<FormSchema>()
                     repo.save(schema)
-                    val signals = rulesEngine.evaluate(schema, EvaluationContext())
-                    dispatcher.broadcast(schema.id, signals)
                     call.respond(HttpStatusCode.Created, mapOf("id" to schema.id))
                 }.onFailure { e ->
                     log.error("POST /api/forms failed", e)
@@ -58,11 +60,8 @@ fun Application.configureRouting(
             get("/{id}") {
                 val id = call.parameters["id"]!!
                 val schema = repo.findById(id)
-                if (schema == null) {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Form not found: $id"))
-                } else {
-                    call.respond(schema)
-                }
+                if (schema == null) call.respond(HttpStatusCode.NotFound, mapOf("error" to "Form not found: $id"))
+                else call.respond(schema)
             }
 
             // PUT /api/forms/{id}
@@ -71,14 +70,9 @@ fun Application.configureRouting(
                 runCatching {
                     val updated = call.receive<FormSchema>()
                     val existing = repo.findById(id)
-                    val message = if (existing != null) {
-                        repo.generateUpdateMessage(existing, updated)
-                    } else {
-                        "Update form $id"
-                    }
+                    val message = if (existing != null) repo.generateUpdateMessage(existing, updated)
+                    else "Update form $id"
                     repo.update(updated, message)
-                    val signals = rulesEngine.evaluate(updated, EvaluationContext())
-                    dispatcher.broadcast(id, signals)
                     call.respond(HttpStatusCode.OK, mapOf("id" to id, "message" to message))
                 }.onFailure { e ->
                     log.error("PUT /api/forms/$id failed", e)
@@ -86,11 +80,31 @@ fun Application.configureRouting(
                 }
             }
 
+            // GET /api/forms/{id}/rules
+            get("/{id}/rules") {
+                val id = call.parameters["id"]!!
+                val rules = repo.getRuleSet(id)
+                if (rules == null) call.respond(HttpStatusCode.NotFound, mapOf("error" to "RuleSet not found: $id"))
+                else call.respond(rules)
+            }
+
+            // PUT /api/forms/{id}/rules
+            put("/{id}/rules") {
+                val id = call.parameters["id"]!!
+                runCatching {
+                    val rules = call.receive<RuleSet>()
+                    repo.updateRuleSet(rules, "Update rules for $id")
+                    call.respond(HttpStatusCode.OK, mapOf("id" to id))
+                }.onFailure { e ->
+                    log.error("PUT /api/forms/$id/rules failed", e)
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+                }
+            }
+
             // GET /api/forms/{id}/history
             get("/{id}/history") {
                 runCatching {
-                    val history = repo.getHistory()
-                    call.respond(history)
+                    call.respond(repo.getHistory())
                 }.onFailure { e ->
                     log.error("GET history failed", e)
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
@@ -99,13 +113,13 @@ fun Application.configureRouting(
 
             // GET /api/forms/{id}/diff?from={c1}&to={c2}
             get("/{id}/diff") {
+                val id = call.parameters["id"]!!
                 val from = call.request.queryParameters["from"]
                     ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'from'"))
                 val to = call.request.queryParameters["to"]
                     ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'to'"))
                 runCatching {
-                    val diff = repo.getDiff(from, to)
-                    call.respond(diff)
+                    call.respond(repo.getDiff(id, from, to))
                 }.onFailure { e ->
                     log.error("GET diff failed", e)
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
@@ -118,34 +132,32 @@ fun Application.configureRouting(
                 val commitId = call.parameters["commitId"]!!
                 runCatching {
                     val schema = repo.checkout(id, commitId)
-                    if (schema == null) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Commit not found: $commitId"))
-                        return@runCatching
+                        ?: return@runCatching call.respond(
+                            HttpStatusCode.NotFound, mapOf("error" to "Commit not found: $commitId")
+                        )
+                    val rules = repo.getRuleSet(id)
+                    if (rules != null) {
+                        val signals = rulesEngine.evaluate(schema, rules, emptyMap())
+                        signalDispatcher.broadcast(id, signals)
                     }
-                    val signals = rulesEngine.evaluate(schema, EvaluationContext())
-                    dispatcher.broadcast(id, signals)
-                    call.respond(HttpStatusCode.OK, mapOf(
-                        "checkedOut" to commitId,
-                        "fields" to schema.fields.size
-                    ))
+                    call.respond(HttpStatusCode.OK, mapOf("checkedOut" to commitId, "fields" to schema.fields.size))
                 }.onFailure { e ->
                     log.error("POST checkout failed", e)
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
                 }
             }
 
-            // POST /api/forms/{id}/evaluate
+            // POST /api/forms/{id}/evaluate — stateless, for testing
             post("/{id}/evaluate") {
                 val id = call.parameters["id"]!!
                 runCatching {
                     val context = call.receive<EvaluationContext>()
                     val schema = repo.findById(id)
-                        ?: return@runCatching call.respond(
-                            HttpStatusCode.NotFound,
-                            mapOf("error" to "Form not found: $id")
-                        )
-                    val signals = rulesEngine.evaluate(schema, context)
-                    dispatcher.broadcast(id, signals)
+                        ?: return@runCatching call.respond(HttpStatusCode.NotFound, mapOf("error" to "Form not found: $id"))
+                    val rules = repo.getRuleSet(id)
+                        ?: return@runCatching call.respond(HttpStatusCode.NotFound, mapOf("error" to "RuleSet not found: $id"))
+                    val signals = rulesEngine.evaluate(schema, rules, context.fieldValues, context.role)
+                    signalDispatcher.broadcast(id, signals)
                     call.respond(signals)
                 }.onFailure { e ->
                     log.error("POST evaluate failed", e)
@@ -154,53 +166,70 @@ fun Application.configureRouting(
             }
         }
 
-        // WebSocket: all fields for a form
+        // WS /ws/form/{formId} — bidirectional session
         webSocket("/ws/form/{formId}") {
             val formId = call.parameters["formId"]!!
-            log.info("WS connection for form $formId")
+            log.info("WS connect: $formId")
 
-            // Emit current state immediately
-            dispatcher.lastKnownState(formId)?.let { state ->
-                val json = Json.encodeToString(kotlinx.serialization.builtins.ListSerializer(FieldSignal.serializer()), state)
-                send(Frame.Text(json))
+            val schema = repo.findById(formId)
+            if (schema == null) {
+                close(CloseReason(CloseReason.Codes.NORMAL, "Form not found"))
+                return@webSocket
+            }
+            val rules = repo.getRuleSet(formId)
+            if (rules == null) {
+                close(CloseReason(CloseReason.Codes.NORMAL, "RuleSet not found"))
+                return@webSocket
             }
 
-            val job = launch {
-                dispatcher.subscribeForm(formId).collect { signals ->
-                    val json = Json.encodeToString(kotlinx.serialization.builtins.ListSerializer(FieldSignal.serializer()), signals)
-                    send(Frame.Text(json))
+            val sessionId = UUID.randomUUID().toString()
+            val session = FormSession(sessionId, formId, schema, rules, rulesEngine, signalDispatcher)
+            sessionRegistry.register(sessionId, session)
+
+            val processorJob = session.startProcessor(this)
+
+            // Outgoing: dispatcher → WS frames
+            val outJob = launch {
+                signalDispatcher.flowFor(formId).collect { signal ->
+                    sendSerialized(signal)
                 }
             }
 
-            try {
+            // Incoming: WS frames → session
+            val inJob = launch {
                 for (frame in incoming) {
-                    // Ignore incoming frames — this is a push-only channel
+                    if (frame is Frame.Text) {
+                        runCatching {
+                            val event = json.decodeFromString<InputEvent>(frame.readText())
+                            session.onInput(event)
+                        }.onFailure { e ->
+                            log.warn("Invalid WS event: ${e.message}")
+                        }
+                    }
                 }
-            } finally {
-                job.cancel()
-                log.info("WS connection closed for form $formId")
             }
+
+            // Send initial state directly to this client, then let dispatcher handle updates
+            val initialSignals = rulesEngine.evaluate(schema, rules, emptyMap())
+            initialSignals.forEach { sendSerialized(it) }
+
+            inJob.join()
+            outJob.cancel()
+            processorJob.cancel()
+            session.close()
+            sessionRegistry.unregister(sessionId)
+            log.info("WS disconnect: $formId / $sessionId")
         }
 
-        // WebSocket: single field
+        // WS /ws/form/{formId}/field/{fieldId} — single field signals
         webSocket("/ws/form/{formId}/field/{fieldId}") {
             val formId = call.parameters["formId"]!!
             val fieldId = call.parameters["fieldId"]!!
-            log.info("WS field connection: $formId/$fieldId")
-
-            dispatcher.lastKnownState(formId)
-                ?.find { it.fieldId == fieldId }
-                ?.let { signal ->
-                    val json = Json.encodeToString(FieldSignal.serializer(), signal)
-                    send(Frame.Text(json))
-                }
+            log.info("WS field connect: $formId/$fieldId")
 
             val job = launch {
-                dispatcher.subscribeForm(formId).collect { signals ->
-                    signals.find { it.fieldId == fieldId }?.let { signal ->
-                        val json = Json.encodeToString(FieldSignal.serializer(), signal)
-                        send(Frame.Text(json))
-                    }
+                signalDispatcher.flowFor(formId).collect { signal ->
+                    if (signal.fieldId == fieldId) sendSerialized(signal)
                 }
             }
 
@@ -212,4 +241,3 @@ fun Application.configureRouting(
         }
     }
 }
-

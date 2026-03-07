@@ -11,3 +11,6 @@ terminus:
   db: ${TERMINUS_DB:formgraph}
   user: ${TERMINUS_USER:admin}
   password: ${TERMINUS_PASSWORD:root}
+
+asp:
+  clingo_path: ${CLINGO_PATH:clingo}

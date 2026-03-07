@@ -20,18 +20,13 @@ services:
 
   formgraph:
     build: .
-    container_name: formgraph
     ports:
       - "8080:8080"
-    environment:
-      TERMINUS_URL: http://terminusdb:6363
-      TERMINUS_TEAM: admin
-      TERMINUS_DB: formgraph
-      TERMINUS_USER: admin
-      TERMINUS_PASSWORD: root
     depends_on:
       terminusdb:
         condition: service_healthy
+    environment:
+      TERMINUS_URL: http://terminusdb:6363
 
 volumes:
   terminus_data:

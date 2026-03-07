@@ -18,61 +18,82 @@ data class CommitEntry(
 class FormRepository(private val client: TerminusClient) {
     private val log = LoggerFactory.getLogger(FormRepository::class.java)
 
+    // ── Schema ───────────────────────────────────────────────────────────────
+
     suspend fun save(schema: FormSchema) {
         val docs = mutableListOf<JsonObject>()
         docs.add(SchemaMapper.formSchemaToDoc(schema))
-        schema.fields.forEach { field ->
-            docs.add(SchemaMapper.formFieldToDoc(schema.id, field))
-        }
-        val message = "Create form ${schema.id} with ${schema.fields.size} fields"
-        client.insertDocumentsWithMessage(docs, message)
+        schema.fields.forEach { docs.add(SchemaMapper.formFieldToDoc(schema.id, it)) }
+        client.insertDocumentsWithMessage(docs, "Create form ${schema.id} with ${schema.fields.size} fields")
         log.info("Saved form schema: ${schema.id}")
     }
 
     suspend fun update(schema: FormSchema, message: String? = null) {
         val docs = mutableListOf<JsonObject>()
         docs.add(SchemaMapper.formSchemaToDoc(schema))
-        schema.fields.forEach { field ->
-            docs.add(SchemaMapper.formFieldToDoc(schema.id, field))
-        }
-        val commitMsg = message ?: "Update form ${schema.id}"
-        client.replaceDocuments(docs, commitMsg)
+        schema.fields.forEach { docs.add(SchemaMapper.formFieldToDoc(schema.id, it)) }
+        client.replaceDocuments(docs, message ?: "Update form ${schema.id}")
         log.info("Updated form schema: ${schema.id}")
     }
 
     suspend fun findById(id: String): FormSchema? {
         return try {
             val schemaDoc = client.getDocument("FormSchema/$id") ?: return null
-            val fieldDocs = loadFieldDocs(id, schemaDoc)
-            SchemaMapper.docToFormSchema(schemaDoc, fieldDocs)
+            val fieldRefs = schemaDoc["fields"]?.jsonArray ?: return null
+            val fields = fieldRefs.mapNotNull { ref ->
+                val docId = when {
+                    ref is JsonPrimitive -> ref.content
+                    ref is JsonObject -> ref["@id"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    else -> return@mapNotNull null
+                }
+                try {
+                    val doc = client.getDocument(docId) ?: return@mapNotNull null
+                    SchemaMapper.docToFormField(doc)
+                } catch (e: Exception) {
+                    log.warn("Failed to load field $docId: ${e.message}")
+                    null
+                }
+            }
+            SchemaMapper.docToFormSchema(schemaDoc, fields)
         } catch (e: Exception) {
             log.error("Failed to load form $id: ${e.message}")
             null
         }
     }
 
-    private suspend fun loadFieldDocs(schemaId: String, schemaDoc: JsonObject): List<FormField> {
-        val fieldRefs = schemaDoc["fields"]?.jsonArray ?: return emptyList()
-        return fieldRefs.mapNotNull { ref ->
-            val fieldDocId = when {
-                ref is JsonPrimitive -> ref.content
-                ref is JsonObject -> ref["@id"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                else -> return@mapNotNull null
-            }
-            try {
-                val doc = client.getDocument(fieldDocId) ?: return@mapNotNull null
-                SchemaMapper.docToFormField(doc)
-            } catch (e: Exception) {
-                log.warn("Failed to load field $fieldDocId: ${e.message}")
-                null
-            }
+    // ── RuleSet ──────────────────────────────────────────────────────────────
+
+    suspend fun saveRuleSet(ruleSet: RuleSet) {
+        client.insertDocumentsWithMessage(
+            listOf(SchemaMapper.ruleSetToDoc(ruleSet)),
+            "Create ruleset for ${ruleSet.formId}"
+        )
+        log.info("Saved ruleset for ${ruleSet.formId}")
+    }
+
+    suspend fun updateRuleSet(ruleSet: RuleSet, message: String? = null) {
+        client.replaceDocuments(
+            listOf(SchemaMapper.ruleSetToDoc(ruleSet)),
+            message ?: "Update ruleset for ${ruleSet.formId}"
+        )
+        log.info("Updated ruleset for ${ruleSet.formId}")
+    }
+
+    suspend fun getRuleSet(formId: String): RuleSet? {
+        return try {
+            val doc = client.getDocument("RuleSet/$formId") ?: return null
+            SchemaMapper.docToRuleSet(doc)
+        } catch (e: Exception) {
+            log.error("Failed to load ruleset for $formId: ${e.message}")
+            null
         }
     }
 
+    // ── History ──────────────────────────────────────────────────────────────
+
     suspend fun getHistory(): List<CommitEntry> {
         return try {
-            val log = client.getCommitLog()
-            log.map { entry ->
+            client.getCommitLog().map { entry ->
                 val obj = entry.jsonObject
                 CommitEntry(
                     id = obj["identifier"]?.jsonPrimitive?.content ?: obj["@id"]?.jsonPrimitive?.content ?: "",
@@ -82,16 +103,17 @@ class FormRepository(private val client: TerminusClient) {
                 )
             }
         } catch (e: Exception) {
-            this.log.error("Failed to get history: ${e.message}")
+            log.error("Failed to get history: ${e.message}")
             emptyList()
         }
     }
 
-    suspend fun getDiff(fromCommit: String, toCommit: String): JsonObject {
+    // ── Diff ─────────────────────────────────────────────────────────────────
+
+    suspend fun getDiff(formId: String, fromCommit: String, toCommit: String): JsonObject {
         return try {
             val fromFields = fieldsAtCommit(fromCommit)
             val toFields = fieldsAtCommit(toCommit)
-
             val fromMap = fromFields.associateBy { it.id }
             val toMap = toFields.associateBy { it.id }
 
@@ -100,25 +122,33 @@ class FormRepository(private val client: TerminusClient) {
             val modified = fromMap.keys.intersect(toMap.keys)
                 .filter { fromMap[it] != toMap[it] }
 
+            val fromRules = ruleSetAtCommit(fromCommit, formId)?.lpContent ?: ""
+            val toRules = ruleSetAtCommit(toCommit, formId)?.lpContent ?: ""
+
             buildJsonObject {
                 put("from", fromCommit.take(10))
                 put("to", toCommit.take(10))
-                put("added", buildJsonArray { added.forEach { add(it) } })
-                put("removed", buildJsonArray { removed.forEach { add(it) } })
-                put("modified", buildJsonArray {
-                    modified.forEach { id ->
-                        add(buildJsonObject {
-                            put("field", id)
-                            put("before", fromMap[id]!!.label)
-                            put("after", toMap[id]!!.label)
-                            put("visibilityChanged",
-                                fromMap[id]!!.visibility != toMap[id]!!.visibility)
-                            put("validationChanged",
-                                fromMap[id]!!.validation != toMap[id]!!.validation)
-                        })
+                put("schema", buildJsonObject {
+                    put("added", buildJsonArray { added.forEach { add(it) } })
+                    put("removed", buildJsonArray { removed.forEach { add(it) } })
+                    put("modified", buildJsonArray {
+                        modified.forEach { id ->
+                            add(buildJsonObject {
+                                put("field", id)
+                                put("before", fromMap[id]!!.label)
+                                put("after", toMap[id]!!.label)
+                            })
+                        }
+                    })
+                    put("unchanged", fromMap.keys.intersect(toMap.keys).size - modified.size)
+                })
+                put("rules", buildJsonObject {
+                    put("changed", fromRules != toRules)
+                    if (fromRules != toRules) {
+                        put("before", fromRules)
+                        put("after", toRules)
                     }
                 })
-                put("unchanged", fromMap.keys.intersect(toMap.keys).size - modified.size)
             }
         } catch (e: Exception) {
             log.error("Failed to compute diff: ${e.message}")
@@ -126,21 +156,23 @@ class FormRepository(private val client: TerminusClient) {
         }
     }
 
-    private suspend fun fieldsAtCommit(commitId: String): List<FormField> {
-        val fieldDocs = client.queryDocumentsAtCommit(commitId, "FormField")
-        return fieldDocs.mapNotNull { el ->
+    private suspend fun fieldsAtCommit(commitId: String): List<FormField> =
+        client.queryDocumentsAtCommit(commitId, "FormField").mapNotNull { el ->
             try { SchemaMapper.docToFormField(el.jsonObject) } catch (e: Exception) { null }
         }
+
+    private suspend fun ruleSetAtCommit(commitId: String, formId: String): RuleSet? {
+        val doc = client.getDocumentAtCommit(commitId, "RuleSet/$formId") ?: return null
+        return try { SchemaMapper.docToRuleSet(doc) } catch (e: Exception) { null }
     }
+
+    // ── Checkout ─────────────────────────────────────────────────────────────
 
     suspend fun checkout(formId: String, commitId: String): FormSchema? {
         log.info("Checking out commit $commitId for form $formId")
         return try {
-            // Read schema document at the target commit
             val schemaDoc = client.getDocumentAtCommit(commitId, "FormSchema/$formId")
                 ?: return null
-
-            // Read all FormField documents at that commit
             val fieldDocs = client.queryDocumentsAtCommit(commitId, "FormField")
             val fields = fieldDocs.mapNotNull { el ->
                 try { SchemaMapper.docToFormField(el.jsonObject) } catch (e: Exception) {
@@ -148,10 +180,14 @@ class FormRepository(private val client: TerminusClient) {
                     null
                 }
             }
-
             val schema = SchemaMapper.docToFormSchema(schemaDoc, fields)
 
-            // Rewrite as current HEAD so future reads reflect the rolled-back state
+            // Restore RuleSet at that commit
+            val rules = ruleSetAtCommit(commitId, formId)
+            if (rules != null) {
+                updateRuleSet(rules, "Checkout: restore rules to commit ${commitId.take(8)}")
+            }
+
             update(schema, "Checkout: rollback to commit ${commitId.take(8)}")
             log.info("Rolled back form $formId to commit ${commitId.take(8)} (${fields.size} fields)")
             schema

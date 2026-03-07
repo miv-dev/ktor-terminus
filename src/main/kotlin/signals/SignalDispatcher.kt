@@ -4,28 +4,23 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import miv.dev.ru.domain.FieldSignal
-import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
 class SignalDispatcher {
-    private val log = LoggerFactory.getLogger(SignalDispatcher::class.java)
+    private val formFlows = ConcurrentHashMap<String, MutableSharedFlow<FieldSignal>>()
 
-    // One SharedFlow per formId
-    private val formFlows = ConcurrentHashMap<String, MutableSharedFlow<List<FieldSignal>>>()
-    // Last known state per formId — emitted immediately to new subscribers
-    private val lastState = ConcurrentHashMap<String, List<FieldSignal>>()
+    private fun mutableFlowFor(formId: String): MutableSharedFlow<FieldSignal> =
+        formFlows.getOrPut(formId) { MutableSharedFlow(replay = 0) }
 
-    private fun flowFor(formId: String): MutableSharedFlow<List<FieldSignal>> =
-        formFlows.getOrPut(formId) { MutableSharedFlow(replay = 1) }
+    fun flowFor(formId: String): SharedFlow<FieldSignal> =
+        mutableFlowFor(formId).asSharedFlow()
 
-    fun subscribeForm(formId: String): SharedFlow<List<FieldSignal>> =
-        flowFor(formId).asSharedFlow()
-
-    suspend fun broadcast(formId: String, signals: List<FieldSignal>) {
-        log.debug("Broadcasting ${signals.size} signals for form $formId")
-        lastState[formId] = signals
-        flowFor(formId).emit(signals)
+    suspend fun emit(formId: String, signal: FieldSignal) {
+        mutableFlowFor(formId).emit(signal)
     }
 
-    fun lastKnownState(formId: String): List<FieldSignal>? = lastState[formId]
+    suspend fun broadcast(formId: String, signals: List<FieldSignal>) {
+        val flow = mutableFlowFor(formId)
+        signals.forEach { flow.emit(it) }
+    }
 }
