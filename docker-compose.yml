@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  terminusdb:
+    image: terminusdb/terminusdb-server:latest
+    container_name: terminusdb
+    ports:
+      - "6363:6363"
+    environment:
+      TERMINUSDB_ADMIN_PASS: root
+      TERMINUSDB_SERVER_NAME: localhost
+    volumes:
+      - terminus_data:/app/terminusdb/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6363/api/info || wget -q -O- http://localhost:6363/api/info || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  formgraph:
+    build: .
+    container_name: formgraph
+    ports:
+      - "8080:8080"
+    environment:
+      TERMINUS_URL: http://terminusdb:6363
+      TERMINUS_TEAM: admin
+      TERMINUS_DB: formgraph
+      TERMINUS_USER: admin
+      TERMINUS_PASSWORD: root
+    depends_on:
+      terminusdb:
+        condition: service_healthy
+
+volumes:
+  terminus_data:

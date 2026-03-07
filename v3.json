@@ -1,0 +1,164 @@
+{
+  "id": "client_form",
+  "name": "Заявка клиента",
+  "description": "Форма подачи клиентской заявки",
+  "fields": [
+    {
+      "id": "client_type",
+      "label": "Тип клиента",
+      "type": "SELECT",
+      "placeholder": "Выберите тип клиента",
+      "validation": [
+        {
+          "type": "Required"
+        }
+      ],
+      "visibility": {
+        "type": "Always"
+      }
+    },
+    {
+      "id": "full_name",
+      "label": "ФИО",
+      "type": "TEXT",
+      "placeholder": "Иванов Иван Иванович",
+      "validation": [
+        {
+          "type": "Required"
+        },
+        {
+          "type": "MinLength",
+          "min": 2
+        }
+      ],
+      "visibility": {
+        "type": "Always"
+      }
+    },
+    {
+      "id": "email",
+      "label": "Email",
+      "type": "EMAIL",
+      "placeholder": "mail@example.com",
+      "validation": [
+        {
+          "type": "RequiredWhen",
+          "condition": {
+            "type": "WhenEquals",
+            "fieldId": "client_type",
+            "value": "физлицо"
+          }
+        },
+        {
+          "type": "MatchesRegex",
+          "pattern": "^[^@]+@[^@]+\\.[^@]+$"
+        }
+      ],
+      "visibility": {
+        "type": "Always"
+      }
+    },
+    {
+      "id": "company_name",
+      "label": "Название компании",
+      "type": "TEXT",
+      "placeholder": "ООО Ромашка",
+      "validation": [
+        {
+          "type": "Required"
+        },
+        {
+          "type": "MinLength",
+          "min": 3
+        }
+      ],
+      "visibility": {
+        "type": "WhenEquals",
+        "fieldId": "client_type",
+        "value": "юрлицо"
+      }
+    },
+    {
+      "id": "inn",
+      "label": "ИНН",
+      "type": "TEXT",
+      "placeholder": "1234567890",
+      "validation": [
+        {
+          "type": "Required"
+        },
+        {
+          "type": "MinLength",
+          "min": 10
+        },
+        {
+          "type": "MaxLength",
+          "max": 12
+        }
+      ],
+      "visibility": {
+        "type": "WhenEquals",
+        "fieldId": "client_type",
+        "value": "юрлицо"
+      }
+    },
+    {
+      "id": "kpp",
+      "label": "КПП",
+      "type": "TEXT",
+      "placeholder": "123456789",
+      "validation": [
+        {
+          "type": "Required"
+        },
+        {
+          "type": "MinLength",
+          "min": 9
+        },
+        {
+          "type": "MaxLength",
+          "max": 9
+        }
+      ],
+      "visibility": {
+        "type": "WhenEquals",
+        "fieldId": "client_type",
+        "value": "юрлицо"
+      }
+    },
+    {
+      "id": "passport",
+      "label": "Серия и номер паспорта",
+      "type": "TEXT",
+      "placeholder": "1234 567890",
+      "validation": [
+        {
+          "type": "Required"
+        },
+        {
+          "type": "MatchesRegex",
+          "pattern": "^\\d{4} \\d{6}$"
+        }
+      ],
+      "visibility": {
+        "type": "WhenEquals",
+        "fieldId": "client_type",
+        "value": "физлицо"
+      }
+    },
+    {
+      "id": "phone",
+      "label": "Телефон",
+      "type": "TEXT",
+      "placeholder": "+7 (999) 000-00-00",
+      "validation": [
+        {
+          "type": "Required"
+        }
+      ],
+      "visibility": {
+        "type": "Always"
+      }
+    }
+  ]
+}

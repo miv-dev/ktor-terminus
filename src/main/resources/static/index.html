@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FormGraph — Client Application</title>
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --surface: #161616;
+      --border: #2a2a2a;
+      --text: #e0e0e0;
+      --muted: #606060;
+      --accent: #4a9eff;
+      --green: #3fb950;
+      --red: #f85149;
+      --yellow: #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+      font-size: 13px;
+      display: flex;
+      gap: 0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── LEFT PANEL: Form ─────────────────────────────────────────── */
+    #form-panel {
+      flex: 0 0 480px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+    }
+    .panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .panel-header h2 { font-size: 14px; color: var(--accent); margin-bottom: 4px; }
+    .panel-header .subtitle { color: var(--muted); font-size: 11px; }
+
+    .client-type-selector {
+      display: flex;
+      gap: 8px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .client-type-btn {
+      flex: 1;
+      padding: 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .client-type-btn:hover { border-color: var(--accent); }
+    .client-type-btn.active {
+      border-color: var(--accent);
+      background: rgba(74, 158, 255, 0.1);
+      color: var(--accent);
+    }
+
+    #form-fields { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+    .field-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: opacity 0.2s;
+    }
+    .field-row.hidden { opacity: 0.2; pointer-events: none; }
+    .field-row label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .required-badge {
+      color: var(--red);
+      font-size: 10px;
+      font-weight: bold;
+    }
+    .field-row input, .field-row select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field-row input:focus, .field-row select:focus { border-color: var(--accent); }
+    .field-row.invalid input, .field-row.invalid select { border-color: var(--red); }
+    .field-row.valid input, .field-row.valid select { border-color: var(--green); }
+    .validation-msg { color: var(--red); font-size: 11px; min-height: 14px; }
+    .field-signal-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 2px;
+    }
+    .badge-visible { background: rgba(63, 185, 80, 0.2); color: var(--green); }
+    .badge-hidden { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+
+    /* ── RIGHT PANEL: Versioning ──────────────────────────────────── */
+    #version-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #signal-log-panel {
+      flex: 0 0 200px;
+      min-height: 0;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #history-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .log-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .log-line { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+    .log-line .ts { color: var(--muted); margin-right: 8px; }
+    .log-line .tag-ws { color: var(--accent); }
+    .log-line .tag-signal { color: var(--green); }
+    .log-line .tag-err { color: var(--red); }
+
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+    .commit-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .commit-row:hover { background: var(--surface); }
+    .commit-id { color: var(--accent); font-size: 11px; flex: 0 0 80px; overflow: hidden; text-overflow: ellipsis; }
+    .commit-msg { flex: 1; color: var(--text); font-size: 12px; }
+    .commit-ts { color: var(--muted); font-size: 10px; flex: 0 0 80px; text-align: right; }
+    .checkout-btn {
+      padding: 3px 8px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .checkout-btn:hover { border-color: var(--yellow); color: var(--yellow); }
+
+    #diff-view {
+      padding: 12px 14px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      white-space: pre-wrap;
+      color: var(--muted);
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .status-bar {
+      padding: 6px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 11px;
+    }
+    .ws-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); }
+    .ws-dot.connected { background: var(--green); }
+    .ws-label { color: var(--muted); }
+
+    #refresh-history-btn {
+      margin-left: auto;
+      padding: 3px 10px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    #refresh-history-btn:hover { color: var(--text); border-color: var(--accent); }
+  </style>
+</head>
+<body>
+
+<!-- LEFT: Form -->
+<div id="form-panel">
+  <div class="panel-header" style="display:flex;align-items:center;">
+    <div style="flex:1">
+      <h2>Заявка клиента</h2>
+      <div class="subtitle">FormGraph PoC — backend-driven form engine</div>
+    </div>
+    <button id="reload-form-btn" onclick="loadSchema()" style="padding:4px 10px;background:transparent;border:1px solid var(--border);color:var(--muted);font-family:inherit;font-size:11px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">↻ Reload</button>
+  </div>
+  <div class="client-type-selector">
+    <button class="client-type-btn" id="btn-fiz" onclick="selectClientType('физлицо')">Физлицо</button>
+    <button class="client-type-btn" id="btn-yur" onclick="selectClientType('юрлицо')">Юрлицо</button>
+    <button class="client-type-btn" id="btn-reset" onclick="selectClientType(null)">Сброс</button>
+  </div>
+  <div id="form-fields">
+    <!-- fields rendered by JS -->
+  </div>
+</div>
+
+<!-- RIGHT: Signals + History -->
+<div id="version-panel">
+  <div id="signal-log-panel">
+    <div class="status-bar">
+      <div class="ws-dot" id="ws-dot"></div>
+      <span class="ws-label" id="ws-status">WebSocket: disconnected</span>
+      <span id="signal-count" style="color:var(--muted)"></span>
+    </div>
+    <div class="panel-header">
+      <h2>Signal Log</h2>
+    </div>
+    <div class="log-area" id="signal-log"></div>
+  </div>
+
+  <div id="history-panel">
+    <div class="panel-header" style="display:flex;align-items:center;">
+      <h2 style="flex:1">Commit History</h2>
+      <button id="refresh-history-btn" onclick="loadHistory()">↻ Refresh</button>
+    </div>
+    <div class="history-list" id="history-list"></div>
+    <div id="diff-view" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+const FORM_ID = 'client_form';
+const API = `http://${location.host}/api/forms/${FORM_ID}`;
+const WS_URL = `ws://${location.host}/ws/form/${FORM_ID}`;
+
+let ws = null;
+let currentSignals = {};
+let currentClientType = null;
+let selectedCommits = [];
+let FIELD_DEFS = [];  // loaded from backend
+
+// ── Load schema from backend, then render ────────────────────────────────────
+function loadSchema() {
+  fetch(API)
+    .then(r => r.json())
+    .then(schema => {
+      FIELD_DEFS = schema.fields.map(f => ({
+        id: f.id,
+        label: f.label,
+        type: f.type === 'SELECT' ? 'select' : f.type === 'EMAIL' ? 'email' : 'text',
+        placeholder: f.placeholder || '',
+        options: f.type === 'SELECT' ? ['физлицо', 'юрлицо'] : undefined
+      }));
+      renderFields();
+      logSignal(`schema loaded: ${FIELD_DEFS.length} fields`, 'tag-signal');
+    })
+    .catch(e => logSignal(`schema load error: ${e.message}`, 'tag-err'));
+}
+
+// ── Render fields ─────────────────────────────────────────────────────────────
+function renderFields() {
+  const container = document.getElementById('form-fields');
+  container.innerHTML = '';
+  FIELD_DEFS.forEach(f => {
+    const sig = currentSignals[f.id] || { visible: true, required: false };
+    const row = document.createElement('div');
+    row.className = 'field-row' + (sig.visible ? '' : ' hidden');
+    row.id = 'row-' + f.id;
+
+    const label = document.createElement('label');
+    label.innerHTML = `<span>${f.label}</span>` +
+      (sig.required ? '<span class="required-badge">* required</span>' : '') +
+      `<span class="field-signal-badge ${sig.visible ? 'badge-visible' : 'badge-hidden'}">${sig.visible ? 'visible' : 'hidden'}</span>`;
+
+    let input;
+    if (f.type === 'select') {
+      input = document.createElement('select');
+      input.innerHTML = '<option value="">— выберите —</option>' +
+        (f.options || []).map(o => `<option value="${o}">${o}</option>`).join('');
+      input.onchange = () => {
+        if (f.id === 'client_type') selectClientType(input.value || null);
+      };
+    } else {
+      input = document.createElement('input');
+      input.type = f.type;
+      input.placeholder = f.placeholder || '';
+      input.oninput = () => debounceEvaluate();
+    }
+    input.id = 'input-' + f.id;
+
+    const msg = document.createElement('div');
+    msg.className = 'validation-msg';
+    msg.id = 'msg-' + f.id;
+    if (sig.validationMessage) msg.textContent = sig.validationMessage;
+
+    row.appendChild(label);
+    row.appendChild(input);
+    row.appendChild(msg);
+    container.appendChild(row);
+  });
+}
+
+function applySignals(signals) {
+  signals.forEach(sig => {
+    currentSignals[sig.fieldId] = sig;
+    const row = document.getElementById('row-' + sig.fieldId);
+    if (!row) return;
+
+    let cls = 'field-row';
+    if (!sig.visible) cls += ' hidden';
+    else if (sig.valid === false) cls += ' invalid';
+    else if (sig.valid === true) cls += ' valid';
+    row.className = cls;
+
+    const label = row.querySelector('label');
+    if (label) {
+      const reqBadge = sig.required ? '<span class="required-badge">* required</span>' : '';
+      const visBadge = `<span class="field-signal-badge ${sig.visible ? 'badge-visible' : 'badge-hidden'}">${sig.visible ? 'visible' : 'hidden'}</span>`;
+      const fieldDef = FIELD_DEFS.find(f => f.id === sig.fieldId);
+      label.innerHTML = `<span>${fieldDef?.label || sig.fieldId}</span>${reqBadge}${visBadge}`;
+    }
+    const msg = document.getElementById('msg-' + sig.fieldId);
+    if (msg) msg.textContent = sig.validationMessage || '';
+  });
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    document.getElementById('ws-dot').classList.add('connected');
+    document.getElementById('ws-status').textContent = 'WebSocket: connected';
+    logSignal('<tag-ws>connected</tag-ws>', 'tag-ws');
+  };
+
+  ws.onmessage = (evt) => {
+    try {
+      const signals = JSON.parse(evt.data);
+      const arr = Array.isArray(signals) ? signals : [signals];
+      applySignals(arr);
+      document.getElementById('signal-count').textContent = `${arr.length} signals`;
+      logSignal(`received ${arr.length} signal(s): ${arr.map(s => s.fieldId + (s.visible ? '✓' : '✗')).join(', ')}`, 'tag-signal');
+    } catch (e) {
+      logSignal(`parse error: ${e.message}`, 'tag-err');
+    }
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-dot').classList.remove('connected');
+    document.getElementById('ws-status').textContent = 'WebSocket: reconnecting...';
+    setTimeout(connectWS, 2000);
+  };
+
+  ws.onerror = (e) => {
+    logSignal('WebSocket error', 'tag-err');
+  };
+}
+
+function logSignal(msg, tag) {
+  const log = document.getElementById('signal-log');
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  const ts = new Date().toTimeString().slice(0, 8);
+  line.innerHTML = `<span class="ts">${ts}</span><span class="${tag}">${msg}</span>`;
+  log.appendChild(line);
+  if (log.children.length > 200) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── Collect all current field values ─────────────────────────────────────────
+function collectFieldValues() {
+  const values = {};
+  FIELD_DEFS.forEach(f => {
+    const el = document.getElementById('input-' + f.id);
+    if (el && el.value) values[f.id] = el.value;
+  });
+  return values;
+}
+
+// ── Debounced evaluate ────────────────────────────────────────────────────────
+let evalTimer = null;
+function debounceEvaluate() {
+  clearTimeout(evalTimer);
+  evalTimer = setTimeout(sendEvaluate, 300);
+}
+
+function sendEvaluate() {
+  const body = { role: 'user', fieldValues: collectFieldValues() };
+  fetch(`${API}/evaluate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  .then(r => r.json())
+  .then(signals => logSignal(`evaluate → ${signals.length} signals`, 'tag-signal'))
+  .catch(e => logSignal(`evaluate error: ${e.message}`, 'tag-err'));
+}
+
+// ── Client type selection ─────────────────────────────────────────────────────
+function selectClientType(type) {
+  currentClientType = type;
+  document.getElementById('btn-fiz').classList.toggle('active', type === 'физлицо');
+  document.getElementById('btn-yur').classList.toggle('active', type === 'юрлицо');
+
+  // Sync the select input, then evaluate with all current values
+  const sel = document.getElementById('input-client_type');
+  if (sel) sel.value = type || '';
+
+  sendEvaluate();
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+function loadHistory() {
+  fetch(`${API}/history`)
+    .then(r => r.json())
+    .then(renderHistory)
+    .catch(e => logSignal(`history error: ${e.message}`, 'tag-err'));
+}
+
+function renderHistory(commits) {
+  const list = document.getElementById('history-list');
+  list.innerHTML = '';
+  if (!commits || commits.length === 0) {
+    list.innerHTML = '<div style="padding:12px;color:var(--muted)">No commits found</div>';
+    return;
+  }
+  commits.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'commit-row';
+    const shortId = (c.id || '').slice(0, 10);
+    const fullId = c.id || '';
+    const ts = c.timestamp ? new Date(c.timestamp * 1000).toLocaleString('ru') : '';
+    row.innerHTML = `
+      <span class="commit-id">${shortId}</span>
+      <span class="commit-msg">${c.message || '(no message)'}</span>
+      <span class="commit-ts">${ts}</span>
+      <button class="checkout-btn" onclick="checkout('${fullId}')">checkout</button>
+    `;
+    row.onclick = (e) => {
+      if (e.target.classList.contains('checkout-btn')) return;
+      toggleCommitSelect(fullId, row);
+    };
+    list.appendChild(row);
+  });
+}
+
+function toggleCommitSelect(id, row) {
+  const idx = selectedCommits.indexOf(id);
+  if (idx === -1) {
+    selectedCommits.push(id);
+    row.style.background = 'rgba(74, 158, 255, 0.1)';
+    if (selectedCommits.length === 2) {
+      loadDiff(selectedCommits[0], selectedCommits[1]);
+      selectedCommits = [];
+      setTimeout(() => document.querySelectorAll('.commit-row').forEach(r => r.style.background = ''), 1500);
+    }
+  }
+}
+
+function loadDiff(from, to) {
+  fetch(`${API}/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)
+    .then(r => r.json())
+    .then(diff => {
+      const view = document.getElementById('diff-view');
+      view.style.display = 'block';
+      view.textContent = JSON.stringify(diff, null, 2);
+      logSignal(`diff loaded (${from.slice(0,8)} → ${to.slice(0,8)})`, 'tag-signal');
+    })
+    .catch(e => logSignal(`diff error: ${e.message}`, 'tag-err'));
+}
+
+function checkout(commitId) {
+  if (!confirm(`Checkout commit ${commitId.slice(0,10)}?`)) return;
+  fetch(`${API}/checkout/${encodeURIComponent(commitId)}`, { method: 'POST' })
+    .then(r => r.json())
+    .then(res => {
+      logSignal(`checked out ${commitId.slice(0,10)}`, 'tag-signal');
+    })
+    .catch(e => logSignal(`checkout error: ${e.message}`, 'tag-err'));
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadSchema();
+  connectWS();
+  setTimeout(loadHistory, 1000);
+});
+</script>
+</body>
+</html>

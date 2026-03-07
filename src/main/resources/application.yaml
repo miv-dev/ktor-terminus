@@ -1,0 +1,13 @@
+ktor:
+  application:
+    modules:
+      - miv.dev.ru.ApplicationKt.module
+  deployment:
+    port: 8080
+
+terminus:
+  url: ${TERMINUS_URL:http://127.0.0.1:6363}
+  team: ${TERMINUS_TEAM:admin}
+  db: ${TERMINUS_DB:formgraph}
+  user: ${TERMINUS_USER:admin}
+  password: ${TERMINUS_PASSWORD:root}
