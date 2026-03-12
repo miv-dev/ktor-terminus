@@ -1,7 +1,12 @@
 package miv.dev.ru.terminus
 
 import kotlinx.serialization.json.*
-import miv.dev.ru.domain.*
+import miv.dev.ru.domain.DataSource
+import miv.dev.ru.domain.FieldType
+import miv.dev.ru.domain.FormField
+import miv.dev.ru.domain.FormSchema
+import miv.dev.ru.domain.RuleSet
+import miv.dev.ru.domain.SubmitAction
 
 object SchemaMapper {
 
@@ -15,6 +20,14 @@ object SchemaMapper {
         put("fields", buildJsonArray {
             schema.fields.forEach { add("FormField/${schema.id}_${it.id}") }
         })
+        schema.submitAction?.let { sa ->
+            put("submitAction", buildJsonObject {
+                put("@type", "SubmitAction")
+                put("url", sa.url)
+                put("method", sa.method)
+                put("headers", buildJsonObject { sa.headers.forEach { (k, v) -> put(k, v) } }.toString())
+            })
+        }
     }
 
     fun formFieldToDoc(schemaId: String, field: FormField): JsonObject = buildJsonObject {
@@ -26,6 +39,17 @@ object SchemaMapper {
         put("placeholder", field.placeholder)
         put("options", buildJsonArray { field.options.forEach { add(it) } })
         put("form", "FormSchema/$schemaId")
+        field.dataSource?.let { ds ->
+            put("dataSource", buildJsonObject {
+                put("@type", "DataSource")
+                put("url", ds.url)
+                put("method", ds.method)
+                put("bodyParam", ds.bodyParam)
+                put("queryParam", ds.queryParam)
+                put("triggerField", ds.triggerField)
+                put("responsePath", ds.responsePath)
+            })
+        }
     }
 
     fun ruleSetToDoc(ruleSet: RuleSet): JsonObject = buildJsonObject {
@@ -40,7 +64,16 @@ object SchemaMapper {
     fun docToFormSchema(doc: JsonObject, fields: List<FormField>): FormSchema = FormSchema(
         id = doc["formId"]!!.jsonPrimitive.content,
         name = doc["name"]!!.jsonPrimitive.content,
-        fields = fields
+        fields = fields,
+        submitAction = doc["submitAction"]?.takeIf { it is JsonObject }?.jsonObject?.let { sa ->
+            SubmitAction(
+                url = sa["url"]!!.jsonPrimitive.content,
+                method = sa["method"]?.jsonPrimitive?.content ?: "POST",
+                headers = sa["headers"]?.jsonPrimitive?.content
+                    ?.let { Json.parseToJsonElement(it).jsonObject.mapValues { e -> e.value.jsonPrimitive.content } }
+                    ?: emptyMap()
+            )
+        }
     )
 
     fun docToFormField(doc: JsonObject): FormField = FormField(
@@ -48,7 +81,17 @@ object SchemaMapper {
         label = doc["label"]!!.jsonPrimitive.content,
         type = FieldType.valueOf(doc["fieldType"]!!.jsonPrimitive.content),
         placeholder = doc["placeholder"]?.jsonPrimitive?.content ?: "",
-        options = doc["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+        options = doc["options"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList(),
+        dataSource = doc["dataSource"]?.takeIf { it is JsonObject }?.jsonObject?.let { ds ->
+            DataSource(
+                url = ds["url"]!!.jsonPrimitive.content,
+                method = ds["method"]?.jsonPrimitive?.content ?: "POST",
+                bodyParam = ds["bodyParam"]?.jsonPrimitive?.content ?: "",
+                queryParam = ds["queryParam"]?.jsonPrimitive?.content ?: "",
+                triggerField = ds["triggerField"]!!.jsonPrimitive.content,
+                responsePath = ds["responsePath"]?.jsonPrimitive?.content ?: "data"
+            )
+        }
     )
 
     fun docToRuleSet(doc: JsonObject): RuleSet = RuleSet(
@@ -69,6 +112,19 @@ object SchemaMapper {
                 put("@type", "Set")
                 put("@class", "FormField")
             })
+            put("submitAction", buildJsonObject {
+                put("@type", "Optional")
+                put("@class", "SubmitAction")
+            })
+        })
+        add(buildJsonObject {
+            put("@type", "Class")
+            put("@id", "SubmitAction")
+            put("@subdocument", buildJsonArray {})
+            put("@key", buildJsonObject { put("@type", "Random") })
+            put("url", "xsd:string")
+            put("method", "xsd:string")
+            put("headers", "xsd:string")
         })
         add(buildJsonObject {
             put("@type", "Class")
@@ -82,6 +138,22 @@ object SchemaMapper {
                 put("@class", "xsd:string")
             })
             put("form", "FormSchema")
+            put("dataSource", buildJsonObject {
+                put("@type", "Optional")
+                put("@class", "DataSource")
+            })
+        })
+        add(buildJsonObject {
+            put("@type", "Class")
+            put("@id", "DataSource")
+            put("@subdocument", buildJsonArray {})
+            put("@key", buildJsonObject { put("@type", "Random") })
+            put("url", "xsd:string")
+            put("method", "xsd:string")
+            put("bodyParam", "xsd:string")
+            put("queryParam", "xsd:string")
+            put("triggerField", "xsd:string")
+            put("responsePath", "xsd:string")
         })
         add(buildJsonObject {
             put("@type", "Class")

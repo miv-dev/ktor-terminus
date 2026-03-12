@@ -5,6 +5,7 @@ import io.ktor.server.netty.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import miv.dev.ru.api.ExternalDataClient
 import miv.dev.ru.asp.AspRulesEngine
 import miv.dev.ru.forms.FormRepository
 import miv.dev.ru.forms.SeedData
@@ -38,10 +39,22 @@ fun Application.module() {
     val rulesEngine = AspRulesEngine(clingoPath)
     val signalDispatcher = SignalDispatcher()
     val sessionRegistry = SessionRegistry()
+    val countryCityClient = ExternalDataClient()
 
     configureSerialization()
     configureWebSockets()
-    configureRouting(formRepo, rulesEngine, signalDispatcher, sessionRegistry)
+    configureRouting(
+        repo = formRepo,
+        rulesEngine = rulesEngine,
+        signalDispatcher = signalDispatcher,
+        sessionRegistry = sessionRegistry,
+        countryCityClient = countryCityClient,
+        terminusClient = terminusClient,
+        onAdminReset = {
+            terminusClient.deleteDatabase()
+            initializeTerminus(terminusClient, formRepo, log)
+        }
+    )
 
     val appScope = CoroutineScope(Dispatchers.IO)
 
@@ -57,10 +70,11 @@ fun Application.module() {
 
     monitor.subscribe(ApplicationStopped) {
         terminusClient.close()
+        countryCityClient.close()
     }
 }
 
-private suspend fun initializeTerminus(
+internal suspend fun initializeTerminus(
     client: TerminusClient,
     repo: FormRepository,
     log: org.slf4j.Logger
@@ -82,6 +96,15 @@ private suspend fun initializeTerminus(
         repo.update(SeedData.clientFormV2, "Migration v2: added comment field")
         repo.updateRuleSet(SeedData.rulesV2, "Migration v2: phone always required")
         log.info("Seeded client_form v2 migration")
+
+        // Seed v3: country + city fields with API-driven options
+        repo.update(SeedData.clientFormV3, "Migration v3: added country and city fields")
+        repo.updateRuleSet(SeedData.rulesV3, "Migration v3: country/city visibility rules")
+        log.info("Seeded client_form v3 migration")
+
+        // Seed v4: submit action
+        repo.update(SeedData.clientFormV4, "Migration v4: added submit action")
+        log.info("Seeded client_form v4 migration")
     } else {
         log.info("TerminusDB database found — skipping seed")
     }

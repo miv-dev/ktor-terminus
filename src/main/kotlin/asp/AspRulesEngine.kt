@@ -34,6 +34,9 @@ class AspRulesEngine(private val clingoPath: String = "clingo") {
             val escaped = v.replace("\"", "\\\"")
             appendLine("""field_value($k, "$escaped").""")
         }
+        schema.fields.forEach { f ->
+            f.dataSource?.let { appendLine("data_source(${f.id}, ${it.triggerField}).") }
+        }
         appendLine("""user_role("$role").""")
     }
 
@@ -68,8 +71,8 @@ class AspRulesEngine(private val clingoPath: String = "clingo") {
             }
         }
 
-    private fun mapToSignals(schema: FormSchema, answerSet: AnswerSet): List<FieldSignal> =
-        schema.fields.map { field ->
+    private fun mapToSignals(schema: FormSchema, answerSet: AnswerSet): List<FieldSignal> {
+        val fieldSignals = schema.fields.map { field ->
             val id = field.id
             val invalidAtom = answerSet.firstOrNull { it.startsWith("invalid($id,") }
             FieldSignal(
@@ -83,9 +86,17 @@ class AspRulesEngine(private val clingoPath: String = "clingo") {
                     else -> null
                 },
                 validationMessage = invalidAtom?.let { extractMessage(it) },
-                hints = answerSet.filter { it.startsWith("hint($id,") }.map { extractHintKey(it) }
+                hints = answerSet.filter { it.startsWith("hint($id,") }.map { extractHintKey(it) },
+                fetchOptions = answerSet.contains("fetch_options($id)")
             )
         }
+        val submitSignal = FieldSignal(
+            fieldId = "__submit__",
+            visible = answerSet.contains("submit_allowed"),
+            required = false
+        )
+        return fieldSignals + submitSignal
+    }
 
     // invalid(fieldId,"message") → message
     private fun extractMessage(atom: String): String {

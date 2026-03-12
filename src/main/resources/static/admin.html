@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FormGraph Admin</title>
+  <style>
+    :root {
+      --bg: #0d0d0d; --surface: #161616; --surface2: #1e1e1e;
+      --border: #2a2a2a; --text: #e0e0e0; --muted: #606060;
+      --accent: #4a9eff; --green: #3fb950; --red: #f85149;
+      --yellow: #d29922; --purple: #bc8cff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    header h1 { font-size: 15px; color: var(--accent); }
+    header .db-info { color: var(--muted); font-size: 11px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); display: inline-block; margin-right: 6px; }
+    .status-dot.ok { background: var(--green); }
+
+    nav {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 24px; display: flex; gap: 0;
+    }
+    nav button {
+      padding: 10px 20px; background: transparent; border: none; border-bottom: 2px solid transparent;
+      color: var(--muted); font-family: inherit; font-size: 12px; cursor: pointer;
+    }
+    nav button:hover { color: var(--text); }
+    nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .tab { display: none; padding: 24px; }
+    .tab.active { display: block; }
+
+    /* ── Tables ──────────────────────────── */
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 8px 12px; background: var(--surface); color: var(--muted); font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+    td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .badge { display: inline-block; padding: 1px 7px; font-size: 10px; border-radius: 2px; }
+    .badge-blue  { background: rgba(74,158,255,0.15); color: var(--accent); }
+    .badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+    .badge-yellow{ background: rgba(210,153,34,0.15); color: var(--yellow); }
+    .badge-purple{ background: rgba(188,140,255,0.15); color: var(--purple); }
+    .tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
+
+    /* ── Code blocks ─────────────────────── */
+    pre {
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 16px; overflow: auto; font-size: 12px;
+      color: #a0c4ff; white-space: pre; line-height: 1.6;
+    }
+
+    /* ── Cards ──────────────────────────── */
+    .card { background: var(--surface); border: 1px solid var(--border); padding: 16px; margin-bottom: 16px; }
+    .card h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; margin-bottom: 12px; }
+    .stat-row { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 20px; }
+    .stat { background: var(--surface2); border: 1px solid var(--border); padding: 12px 20px; min-width: 120px; }
+    .stat .val { font-size: 24px; color: var(--accent); font-weight: bold; }
+    .stat .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+
+    /* ── Commit log ──────────────────────── */
+    .commit { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .commit-sha { color: var(--accent); font-size: 11px; flex: 0 0 90px; }
+    .commit-msg { flex: 1; color: var(--text); }
+    .commit-ts  { color: var(--muted); font-size: 10px; flex: 0 0 140px; text-align: right; }
+
+    /* ── DataSource chip ─────────────────── */
+    .ds-chip { font-size: 10px; color: var(--yellow); background: rgba(210,153,34,0.1); border: 1px solid rgba(210,153,34,0.3); padding: 2px 8px; display: inline-block; margin-top: 4px; }
+
+    /* ── Forms ───────────────────────────── */
+    .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+    label.fl { font-size: 11px; color: var(--muted); }
+    input.fi, select.fi, textarea.fi {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+      font-family: inherit; font-size: 12px; padding: 7px 10px; outline: none; width: 100%;
+    }
+    input.fi:focus, textarea.fi:focus { border-color: var(--accent); }
+    textarea.fi { resize: vertical; min-height: 100px; }
+    .btn { padding: 8px 18px; border: 1px solid; font-family: inherit; font-size: 12px; cursor: pointer; background: transparent; }
+    .btn-primary { border-color: var(--accent); color: var(--accent); }
+    .btn-primary:hover { background: rgba(74,158,255,0.1); }
+    .btn-danger  { border-color: var(--red); color: var(--red); }
+    .btn-danger:hover { background: rgba(248,81,73,0.1); }
+
+    /* ── JSON viewer ─────────────────────── */
+    .json-tree { max-height: 500px; overflow-y: auto; }
+
+    /* ── Eval result ─────────────────────── */
+    .signal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 12px; }
+    .signal-card { background: var(--surface2); border: 1px solid var(--border); padding: 10px 12px; }
+    .signal-card .field-id { color: var(--accent); font-size: 11px; margin-bottom: 6px; }
+    .signal-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .loading { color: var(--muted); padding: 16px 0; }
+    .error-msg { color: var(--red); padding: 8px 0; font-size: 12px; }
+    .reset-warning { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); padding: 14px; margin-bottom: 16px; color: var(--red); font-size: 12px; }
+    .curl-block { background: var(--surface2); border: 1px solid var(--border); padding: 12px; font-size: 11px; color: var(--muted); margin-top: 12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="status-dot" id="status-dot"></span>
+  <h1>FormGraph Admin</h1>
+  <span class="db-info" id="db-info">admin / formgraph @ localhost:6363</span>
+</header>
+
+<nav>
+  <button class="active" onclick="switchTab('overview')">Overview</button>
+  <button onclick="switchTab('schema')">Schema</button>
+  <button onclick="switchTab('rules')">Rules</button>
+  <button onclick="switchTab('history')">History</button>
+  <button onclick="switchTab('documents')">Raw Docs</button>
+  <button onclick="switchTab('evaluate')">Evaluate</button>
+  <button onclick="switchTab('reset')">Reset</button>
+</nav>
+
+<!-- ── OVERVIEW ─────────────────────────────────────────────── -->
+<div id="tab-overview" class="tab active">
+  <div class="stat-row" id="stats">
+    <div class="stat"><div class="val" id="stat-fields">—</div><div class="lbl">Fields</div></div>
+    <div class="stat"><div class="val" id="stat-commits">—</div><div class="lbl">Commits</div></div>
+    <div class="stat"><div class="val" id="stat-rules">—</div><div class="lbl">Rule Lines</div></div>
+  </div>
+  <div class="card">
+    <h3>Current Form: client_form</h3>
+    <div id="overview-fields" class="loading">Loading...</div>
+  </div>
+</div>
+
+<!-- ── SCHEMA ────────────────────────────────────────────────── -->
+<div id="tab-schema" class="tab">
+  <div id="schema-content" class="loading">Loading...</div>
+</div>
+
+<!-- ── RULES ─────────────────────────────────────────────────── -->
+<div id="tab-rules" class="tab">
+  <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;">
+    <span style="color:var(--muted);font-size:11px;" id="rules-meta"></span>
+    <button class="btn btn-primary" onclick="loadRules()">↻ Refresh</button>
+  </div>
+  <pre id="rules-content">Loading...</pre>
+</div>
+
+<!-- ── HISTORY ───────────────────────────────────────────────── -->
+<div id="tab-history" class="tab">
+  <div style="margin-bottom:12px;">
+    <button class="btn btn-primary" onclick="loadHistory()">↻ Refresh</button>
+  </div>
+  <div id="history-content" class="loading">Loading...</div>
+</div>
+
+<!-- ── RAW DOCS ──────────────────────────────────────────────── -->
+<div id="tab-documents" class="tab">
+  <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn btn-primary" onclick="loadDocs('FormSchema')">FormSchema</button>
+    <button class="btn btn-primary" onclick="loadDocs('FormField')">FormField</button>
+    <button class="btn btn-primary" onclick="loadDocs('RuleSet')">RuleSet</button>
+  </div>
+  <div id="docs-type" style="color:var(--muted);font-size:11px;margin-bottom:8px;"></div>
+  <pre id="docs-content" class="json-tree">Select a document type above.</pre>
+</div>
+
+<!-- ── EVALUATE ──────────────────────────────────────────────── -->
+<div id="tab-evaluate" class="tab">
+  <div style="max-width:640px;">
+    <div class="form-row">
+      <label class="fl">Form ID</label>
+      <input class="fi" id="eval-form-id" value="client_form">
+    </div>
+    <div class="form-row">
+      <label class="fl">Role</label>
+      <select class="fi" id="eval-role">
+        <option value="user">user</option>
+        <option value="viewer">viewer</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label class="fl">Field values (JSON object, e.g. {"client_type":"юрлицо"})</label>
+      <textarea class="fi" id="eval-values" placeholder='{"client_type": "юрлицо", "inn": "1234567890"}'></textarea>
+    </div>
+    <button class="btn btn-primary" onclick="runEvaluate()">Run Evaluate</button>
+    <div id="eval-error" class="error-msg"></div>
+  </div>
+  <div class="signal-grid" id="eval-result"></div>
+</div>
+
+<!-- ── RESET ─────────────────────────────────────────────────── -->
+<div id="tab-reset" class="tab">
+  <div style="max-width:560px;">
+    <div class="reset-warning">
+      This will DELETE the entire TerminusDB database and re-seed from scratch (v1 → v2 → v3 migrations). All custom data will be lost.
+    </div>
+    <button class="btn btn-danger" onclick="confirmReset()">Wipe &amp; Reseed Database</button>
+    <div id="reset-status" style="margin-top:12px;font-size:12px;"></div>
+    <div class="curl-block">
+      <div style="color:var(--muted);margin-bottom:6px;">Manual curl commands:</div>
+      <div style="color:#ccc;">curl -u admin:root -X DELETE http://127.0.0.1:6363/api/db/admin/formgraph</div>
+      <div style="color:#ccc;margin-top:4px;">curl -X POST http://localhost:8080/api/admin/reset</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api/forms/client_form';
+const ADMIN = '/api/admin';
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'schema')    loadSchema();
+  if (name === 'rules')     loadRules();
+  if (name === 'history')   loadHistory();
+}
+
+// ── Overview ───────────────────────────────────────────────────────────────
+async function loadOverview() {
+  try {
+    const [schema, history, rules] = await Promise.all([
+      fetch(API).then(r => r.json()),
+      fetch(API + '/history').then(r => r.json()),
+      fetch(API + '/rules').then(r => r.json())
+    ]);
+    document.getElementById('status-dot').classList.add('ok');
+    document.getElementById('stat-fields').textContent = schema.fields?.length ?? '?';
+    document.getElementById('stat-commits').textContent = history?.length ?? '?';
+    const lines = rules.lpContent?.split('\n').length ?? 0;
+    document.getElementById('stat-rules').textContent = lines;
+
+    const html = (schema.fields || []).map(f => `
+      <div style="padding:6px 0;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+        <span style="color:var(--accent);flex:0 0 140px;">${f.id}</span>
+        <span class="badge badge-blue">${f.type}</span>
+        <span style="flex:1;color:var(--muted)">${f.label}</span>
+        ${f.dataSource ? `<span class="badge badge-yellow">api:${f.dataSource.triggerField}→${f.dataSource.responsePath}</span>` : ''}
+      </div>`).join('');
+    document.getElementById('overview-fields').innerHTML = html || '<span class="loading">No fields found</span>';
+  } catch(e) {
+    document.getElementById('overview-fields').innerHTML = `<span class="error-msg">${e.message}</span>`;
+  }
+}
+
+// ── Schema ─────────────────────────────────────────────────────────────────
+async function loadSchema() {
+  const el = document.getElementById('schema-content');
+  try {
+    const schema = await fetch(API).then(r => r.json());
+    const rows = (schema.fields || []).map(f => {
+      const opts = f.options?.length ? `<div class="tag-list">${f.options.slice(0,6).map(o => `<span class="badge badge-green">${o}</span>`).join('')}${f.options.length > 6 ? `<span class="badge badge-green">+${f.options.length-6}</span>` : ''}</div>` : '—';
+      const ds = f.dataSource ? `<div class="ds-chip">GET ${f.dataSource.url.replace('https://','')}<br>trigger: ${f.dataSource.triggerField} → ${f.dataSource.responsePath}</div>` : '';
+      return `<tr>
+        <td style="color:var(--accent)">${f.id}</td>
+        <td><span class="badge badge-blue">${f.type}</span></td>
+        <td>${f.label}</td>
+        <td style="color:var(--muted)">${f.placeholder || '—'}</td>
+        <td>${opts}</td>
+        <td>${ds || '—'}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table>
+      <thead><tr><th>ID</th><th>Type</th><th>Label</th><th>Placeholder</th><th>Static Options</th><th>DataSource</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  } catch(e) { el.innerHTML = `<span class="error-msg">${e.message}</span>`; }
+}
+
+// ── Rules ──────────────────────────────────────────────────────────────────
+async function loadRules() {
+  const el = document.getElementById('rules-content');
+  try {
+    const rules = await fetch(API + '/rules').then(r => r.json());
+    const lines = rules.lpContent?.split('\n').length ?? 0;
+    document.getElementById('rules-meta').textContent = `${lines} lines — formId: ${rules.formId}`;
+    el.textContent = rules.lpContent;
+  } catch(e) { el.textContent = 'Error: ' + e.message; }
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  const el = document.getElementById('history-content');
+  try {
+    const commits = await fetch(API + '/history').then(r => r.json());
+    if (!commits?.length) { el.innerHTML = '<span class="loading">No commits</span>'; return; }
+    el.innerHTML = commits.map(c => {
+      const ts = c.timestamp ? new Date(Number(c.timestamp) * 1000).toLocaleString() : c.timestamp;
+      return `<div class="commit">
+        <span class="commit-sha">${(c.id||'').slice(0,10)}</span>
+        <span class="commit-msg">${c.message || '(no message)'}</span>
+        <span class="commit-ts">${ts}</span>
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = `<span class="error-msg">${e.message}</span>`; }
+}
+
+// ── Raw Docs ───────────────────────────────────────────────────────────────
+async function loadDocs(type) {
+  document.getElementById('docs-type').textContent = type;
+  const el = document.getElementById('docs-content');
+  el.textContent = 'Loading...';
+  try {
+    const docs = await fetch(`${ADMIN}/documents?type=${type}`).then(r => r.json());
+    el.textContent = JSON.stringify(docs, null, 2);
+  } catch(e) { el.textContent = 'Error: ' + e.message; }
+}
+
+// ── Evaluate ───────────────────────────────────────────────────────────────
+async function runEvaluate() {
+  const formId = document.getElementById('eval-form-id').value.trim();
+  const role = document.getElementById('eval-role').value;
+  const raw = document.getElementById('eval-values').value.trim();
+  const errEl = document.getElementById('eval-error');
+  const resultEl = document.getElementById('eval-result');
+  errEl.textContent = '';
+  resultEl.innerHTML = '';
+  let fieldValues = {};
+  if (raw) {
+    try { fieldValues = JSON.parse(raw); }
+    catch(e) { errEl.textContent = 'Invalid JSON: ' + e.message; return; }
+  }
+  try {
+    const signals = await fetch(`/api/forms/${formId}/evaluate`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ role, fieldValues })
+    }).then(r => r.json());
+    if (!Array.isArray(signals)) { errEl.textContent = JSON.stringify(signals); return; }
+    resultEl.innerHTML = signals.map(s => `
+      <div class="signal-card">
+        <div class="field-id">${s.fieldId}</div>
+        <div class="signal-row">
+          <span class="badge ${s.visible ? 'badge-green' : 'badge-blue'}">${s.visible ? 'visible' : 'hidden'}</span>
+          ${s.required ? '<span class="badge badge-yellow">required</span>' : ''}
+          ${s.readOnly ? '<span class="badge badge-purple">readonly</span>' : ''}
+          ${s.valid === true  ? '<span class="badge badge-green">valid</span>' : ''}
+          ${s.valid === false ? '<span class="badge" style="background:rgba(248,81,73,0.15);color:var(--red)">invalid</span>' : ''}
+        </div>
+        ${s.validationMessage ? `<div style="color:var(--red);font-size:10px;margin-top:4px">${s.validationMessage}</div>` : ''}
+        ${(s.hints||[]).length ? `<div style="color:var(--yellow);font-size:10px;margin-top:4px">${s.hints.join(', ')}</div>` : ''}
+        ${(s.options||[]).length ? `<div style="color:var(--muted);font-size:10px;margin-top:4px">${s.options.length} options</div>` : ''}
+      </div>`).join('');
+  } catch(e) { errEl.textContent = e.message; }
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+async function confirmReset() {
+  if (!confirm('This will permanently delete all data and re-seed. Are you sure?')) return;
+  const el = document.getElementById('reset-status');
+  el.style.color = 'var(--yellow)';
+  el.textContent = 'Resetting... this may take 10–20 seconds.';
+  try {
+    const res = await fetch(ADMIN + '/reset', { method: 'POST' }).then(r => r.json());
+    el.style.color = 'var(--green)';
+    el.textContent = 'Done: ' + JSON.stringify(res);
+    loadOverview();
+  } catch(e) {
+    el.style.color = 'var(--red)';
+    el.textContent = 'Error: ' + e.message;
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+loadOverview();
+</script>
+</body>
+</html>

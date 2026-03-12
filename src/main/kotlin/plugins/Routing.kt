@@ -12,7 +12,9 @@ import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
+import miv.dev.ru.api.ExternalDataClient
 import miv.dev.ru.asp.AspRulesEngine
+import miv.dev.ru.terminus.TerminusClient
 import miv.dev.ru.domain.*
 import miv.dev.ru.forms.FormRepository
 import miv.dev.ru.session.FormSession
@@ -28,7 +30,10 @@ fun Application.configureRouting(
     repo: FormRepository,
     rulesEngine: AspRulesEngine,
     signalDispatcher: SignalDispatcher,
-    sessionRegistry: SessionRegistry
+    sessionRegistry: SessionRegistry,
+    countryCityClient: ExternalDataClient,
+    terminusClient: TerminusClient,
+    onAdminReset: suspend () -> Unit
 ) {
     install(CORS) {
         anyHost()
@@ -183,7 +188,7 @@ fun Application.configureRouting(
             }
 
             val sessionId = UUID.randomUUID().toString()
-            val session = FormSession(sessionId, formId, schema, rules, rulesEngine, signalDispatcher)
+            val session = FormSession(sessionId, formId, schema, rules, rulesEngine, signalDispatcher, countryCityClient)
             sessionRegistry.register(sessionId, session)
 
             val processorJob = session.startProcessor(this)
@@ -219,6 +224,32 @@ fun Application.configureRouting(
             session.close()
             sessionRegistry.unregister(sessionId)
             log.info("WS disconnect: $formId / $sessionId")
+        }
+
+        // ── Admin API ─────────────────────────────────────────────────────────
+
+        route("/api/admin") {
+            // GET /api/admin/documents?type=FormField
+            get("/documents") {
+                val type = call.request.queryParameters["type"] ?: "FormSchema"
+                runCatching {
+                    call.respond(terminusClient.queryDocuments(type))
+                }.onFailure { e ->
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+                }
+            }
+
+            // POST /api/admin/reset — wipe DB and re-seed
+            post("/reset") {
+                runCatching {
+                    log.warn("Admin reset triggered")
+                    onAdminReset()
+                    call.respond(HttpStatusCode.OK, mapOf("status" to "reset complete"))
+                }.onFailure { e ->
+                    log.error("Admin reset failed", e)
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+                }
+            }
         }
 
         // WS /ws/form/{formId}/field/{fieldId} — single field signals

@@ -104,6 +104,14 @@
     .field-row[data-readonly="true"] input,
     .field-row[data-readonly="true"] select,
     .field-row[data-readonly="true"] textarea { opacity: 0.5; pointer-events: none; }
+    @keyframes pulse-border {
+      0%, 100% { border-color: var(--border); }
+      50%       { border-color: var(--accent); }
+    }
+    .field-row select.fetching {
+      opacity: 0.5; pointer-events: none;
+      animation: pulse-border 1s ease-in-out infinite;
+    }
     .validation-msg { color: var(--red); font-size: 11px; min-height: 14px; }
     .hints { display: flex; flex-wrap: wrap; gap: 4px; }
     .hint-badge {
@@ -119,6 +127,24 @@
     }
     .vis-badge.shown { background: rgba(63,185,80,0.15); color: var(--green); }
     .vis-badge.hidden { background: rgba(248,81,73,0.15); color: var(--red); }
+
+    #submit-bar {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      display: flex; align-items: center; gap: 12px;
+    }
+    #submit-btn {
+      padding: 8px 24px;
+      background: transparent;
+      border: 1px solid var(--green);
+      color: var(--green);
+      font-family: inherit; font-size: 13px; cursor: pointer;
+      transition: background 0.15s;
+    }
+    #submit-btn:hover:not(:disabled) { background: rgba(63,185,80,0.1); }
+    #submit-btn:disabled { border-color: var(--border); color: var(--muted); cursor: not-allowed; }
+    #submit-status { font-size: 11px; }
 
     /* ── RIGHT PANEL ──────────────────────────────────────────────── */
     #version-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -209,6 +235,10 @@
     <button class="role-btn" id="role-viewer" onclick="switchRole('viewer')">viewer</button>
   </div>
   <div id="form-fields"><!-- rendered by JS --></div>
+  <div id="submit-bar">
+    <button id="submit-btn" disabled onclick="submitForm()">Submit</button>
+    <span id="submit-status"></span>
+  </div>
 </div>
 
 <!-- RIGHT: Signals + History -->
@@ -251,6 +281,7 @@ let ws = null;
 let currentRole = 'user';
 let selectedCommits = [];
 let FIELD_DEFS = [];
+let sessionId = crypto.randomUUID();
 
 // ── Schema load ───────────────────────────────────────────────────────────────
 function loadSchema() {
@@ -311,6 +342,23 @@ function renderFields() {
 
 // ── Apply a single FieldSignal ────────────────────────────────────────────────
 function applySignal(sig) {
+  // Submit sentinel — no DOM row, handle before the row guard
+  if (sig.fieldId === '__submit__') {
+    const btn = document.getElementById('submit-btn');
+    if (btn) btn.disabled = !sig.visible;
+    if (sig.hints && sig.hints.length > 0) {
+      const statusEl = document.getElementById('submit-status');
+      if (sig.hints.includes('submitted')) {
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = `Sent — ${sig.validationMessage || ''}`;
+      } else if (sig.hints.includes('submit_error')) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = `Error — ${sig.validationMessage || ''}`;
+      }
+    }
+    return;
+  }
+
   const row = document.getElementById('row-' + sig.fieldId);
   if (!row) return;
 
@@ -349,6 +397,17 @@ function applySignal(sig) {
   if (hintsEl) {
     hintsEl.innerHTML = (sig.hints || [])
       .map(h => `<span class="hint-badge">${h}</span>`).join('');
+  }
+
+  // Dynamic options (e.g. cities populated from external API)
+  if (sig.options && sig.options.length > 0) {
+    setFieldLoading(sig.fieldId, false);
+    const sel = document.getElementById('input-' + sig.fieldId);
+    if (sel && sel.tagName === 'SELECT') {
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">— выберите —</option>' +
+        sig.options.map(o => `<option value="${o}"${o === prev ? ' selected' : ''}>${o}</option>`).join('');
+    }
   }
 }
 
@@ -391,11 +450,35 @@ function connectWS() {
   ws.onerror = () => logLine('WebSocket error', 'tag-err');
 }
 
+function setFieldLoading(fieldId, loading) {
+  const sel = document.getElementById('input-' + fieldId);
+  if (!sel || sel.tagName !== 'SELECT') return;
+  if (loading) {
+    sel.classList.add('fetching');
+    sel.innerHTML = '<option value="">— loading... —</option>';
+  } else {
+    sel.classList.remove('fetching');
+  }
+}
+
 function sendEvent(event) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(event));
     logLine(`send: ${JSON.stringify(event)}`, 'tag-send');
+    // Show loading state on any field whose dataSource is triggered by this field
+    if (event.type === 'FieldChanged') {
+      FIELD_DEFS.forEach(f => {
+        if (f.dataSource?.triggerField === event.fieldId) setFieldLoading(f.id, true);
+      });
+    }
   }
+}
+
+// ── Submit ────────────────────────────────────────────────────────────────────
+function submitForm() {
+  document.getElementById('submit-status').textContent = 'Submitting...';
+  document.getElementById('submit-status').style.color = 'var(--muted)';
+  sendEvent({ type: 'FormSubmitAttempted', sessionId });
 }
 
 // ── Role switcher ─────────────────────────────────────────────────────────────

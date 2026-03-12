@@ -37,6 +37,14 @@ class TerminusClient(private val config: TerminusConfig) {
         }
     }
 
+    suspend fun deleteDatabase() {
+        val resp = http.delete("${config.url}/api/db/${config.team}/${config.db}")
+        check(resp.status.isSuccess() || resp.status == HttpStatusCode.NotFound) {
+            "Failed to delete DB: ${resp.status} — ${resp.bodyAsText()}"
+        }
+        log.info("Deleted TerminusDB database: ${config.db}")
+    }
+
     suspend fun databaseExists(): Boolean {
         return try {
             val resp = http.get("${config.url}/api/db/${config.team}/${config.db}")
